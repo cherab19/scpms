@@ -1,0 +1,286 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// NextAuth Required Models
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// System Enums
+enum Role {
+  ADMIN
+  PROJECT_MANAGER
+  ENGINEER
+  CONTRACTOR
+  SUPPLIER
+}
+
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  BLOCKED
+}
+
+enum ActivityType {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+}
+
+// Business Models
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  password      String?
+  image         String?
+  role          Role      @default(ENGINEER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts         Account[]
+  sessions         Session[]
+  projectsManaged  Project[]       @relation("ManagerRelation")
+  projectMembers   ProjectMember[]
+  tasksAssigned    Task[]          @relation("TaskAssignee")
+  activityLogs     ActivityLog[]
+  notifications    Notification[]
+  materialsUsage   MaterialUsage[] @relation("UsageLogger")
+  expensesReported Expense[]       @relation("ExpenseReporter")
+  documentsUploaded Document[]     @relation("DocumentUploader")
+}
+
+model Project {
+  id            String        @id @default(cuid())
+  title         String
+  description   String?       @db.Text
+  status        ProjectStatus @default(PLANNING)
+  startDate     DateTime?
+  endDate       DateTime?
+  managerId     String?
+  manager       User?         @relation("ManagerRelation", fields: [managerId], references: [id])
+  progress      Float         @default(0) // 0 to 100
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  members       ProjectMember[]
+  tasks         Task[]
+  milestones    Milestone[]
+  budgets       Budget[]
+  materials     Material[]
+  documents     Document[]
+  reports       Report[]
+  activityLogs  ActivityLog[]
+  expenses      Expense[]
+  notifications Notification[]
+}
+
+model ProjectMember {
+  id        String   @id @default(cuid())
+  projectId String
+  userId    String
+  role      Role     // specific role within project (can differ from global role, e.g. An admin can be just an engineer on a project, though typically it matches).
+  joinedAt  DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+}
+
+model Milestone {
+  id          String   @id @default(cuid())
+  projectId   String
+  title       String
+  description String?
+  dueDate     DateTime
+  isCompleted Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks   Task[]
+}
+
+model Task {
+  id          String     @id @default(cuid())
+  projectId   String
+  milestoneId String?
+  title       String
+  description String?    @db.Text
+  status      TaskStatus @default(PENDING)
+  assigneeId  String?
+  dueDate     DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  milestone Milestone? @relation(fields: [milestoneId], references: [id])
+  assignee  User?      @relation("TaskAssignee", fields: [assigneeId], references: [id])
+}
+
+model Supplier {
+  id          String   @id @default(cuid())
+  name        String
+  contactInfo String?  @db.Text
+  address     String?  @db.Text
+  rating      Float?   // Optional rating 0-5
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  materials Material[]
+}
+
+model Material {
+  id          String   @id @default(cuid())
+  projectId   String
+  supplierId  String?
+  name        String
+  description String?
+  unit        String   // e.g., "tons", "bags", "kg", "units"
+  quantity    Float    @default(0)
+  unitPrice   Float    @default(0) // Cost per unit
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project   Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  supplier  Supplier?       @relation(fields: [supplierId], references: [id])
+  usages    MaterialUsage[]
+}
+
+model MaterialUsage {
+  id         String   @id @default(cuid())
+  materialId String
+  quantity   Float
+  dateUsed   DateTime @default(now())
+  loggedById String
+  notes      String?  @db.Text
+
+  material   Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  loggedBy   User     @relation("UsageLogger", fields: [loggedById], references: [id])
+}
+
+model Budget {
+  id          String   @id @default(cuid())
+  projectId   String
+  category    String   // e.g., "Labor", "Materials", "Equipment"
+  allocated   Float    @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  projectId   String
+  amount      Float
+  description String
+  date        DateTime @default(now())
+  reportedById String
+  category    String   // Maps roughly to Budget category
+  createdAt   DateTime @default(now())
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  reportedBy User    @relation("ExpenseReporter", fields: [reportedById], references: [id])
+}
+
+model Document {
+  id          String   @id @default(cuid())
+  projectId   String
+  title       String
+  fileUrl     String
+  fileType    String   // e.g., "pdf", "image", "blueprint"
+  version     Int      @default(1)
+  uploadedById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploadedBy User    @relation("DocumentUploader", fields: [uploadedById], references: [id])
+}
+
+model Report {
+  id          String   @id @default(cuid())
+  projectId   String
+  title       String
+  content     String   @db.Text
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+  
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  projectId String?
+  title     String
+  message   String   @db.Text
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+}
+
+model ActivityLog {
+  id        String       @id @default(cuid())
+  userId    String
+  projectId String?
+  action    ActivityType
+  details   String       @db.Text
+  createdAt DateTime     @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+}
